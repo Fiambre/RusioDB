@@ -6,8 +6,8 @@ use crate::{
     updater::{self, UpdateInfo},
 };
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, mouse_area, pick_list, row, scrollable,
-    svg, text, text_editor, text_input, tooltip, vertical_rule, Column, Space,
+    button, checkbox, column, container, horizontal_rule, mouse_area, pick_list, row, rule,
+    scrollable, svg, text, text_editor, text_input, tooltip, vertical_rule, Column, Space,
 };
 use iced::{
     alignment::Horizontal, keyboard, window, Alignment, Border, Color, Element, Length, Padding,
@@ -79,7 +79,7 @@ fn icon_only_button(glyph: Bootstrap, hint: &str, message: Message) -> Element<'
 /// Columna label-arriba/valor-abajo, estilo la franja de estadísticas de un
 /// ticker de trading (Binance): etiqueta chica y muted, valor grande y firme.
 fn stat<'a>(label: &'a str, value: String, value_color: Option<Color>) -> Column<'a, Message> {
-    let mut value_text = text(value).size(16);
+    let mut value_text = text(value).size(14);
     if let Some(color) = value_color {
         value_text = value_text.color(color);
     }
@@ -961,9 +961,10 @@ impl App {
         let current_theme = self.active_theme();
         let muted = current_theme.extended_palette().background.strong.color;
         let entry = move |label: &'static str, shortcut: &'static str, message, enabled: bool| {
-            let mut row_content = row![text(label).width(Length::Fill)].align_y(Alignment::Center);
+            let mut row_content =
+                row![text(label).size(13).width(Length::Fill)].align_y(Alignment::Center);
             if !shortcut.is_empty() {
-                row_content = row_content.push(text(shortcut).size(12).color(muted));
+                row_content = row_content.push(text(shortcut).size(11).color(muted));
             }
             Item::new(
                 button(row_content)
@@ -972,10 +973,11 @@ impl App {
                     .on_press_maybe(enabled.then_some(message)),
             )
         };
-        let divider = || Item::new(horizontal_rule(1));
+        let dark = self.dark;
+        let divider = move || Item::new(horizontal_rule(1).style(rule_style(dark)));
         let group = |label, items| {
             Item::with_menu(
-                button(text(label))
+                button(text(label).size(13))
                     .padding([6, 10])
                     .style(button::text)
                     .on_press(Message::Noop),
@@ -1239,6 +1241,13 @@ impl App {
         }
         for entry in &self.connections {
             let selected = self.selected_connection == Some(entry.id);
+            let node_key = entry.id.to_string();
+            let expanded_conn = self.expanded.contains(&node_key);
+            let conn_caret = if expanded_conn {
+                Bootstrap::CaretDownFill
+            } else {
+                Bootstrap::CaretRightFill
+            };
             let (status_glyph, status_color) = match &entry.state {
                 ConnState::Disconnected => (Bootstrap::Circle, palette.background.strong.color),
                 ConnState::Connecting => (Bootstrap::CircleFill, palette.primary.base.color),
@@ -1246,29 +1255,25 @@ impl App {
                 ConnState::Error(_) => (Bootstrap::CircleFill, palette.danger.base.color),
             };
             list = list.push(
-                row![
-                    button(
-                        row![
-                            icon(status_glyph).size(12).color(status_color),
-                            text(&entry.profile.name).size(14)
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .style(if selected {
-                        button::primary
-                    } else {
-                        button::text
-                    })
-                    .width(Length::Fill)
-                    .on_press(Message::SelectConnection(entry.id)),
-                    badge(
-                        entry.profile.driver.to_string(),
-                        driver_badge_color(entry.profile.driver)
-                    ),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
+                button(
+                    row![
+                        icon(conn_caret).size(11),
+                        icon(Bootstrap::DatabaseFill)
+                            .size(13)
+                            .color(driver_badge_color(entry.profile.driver)),
+                        icon(status_glyph).size(11).color(status_color),
+                        text(&entry.profile.name).size(13)
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .style(if selected {
+                    button::primary
+                } else {
+                    button::text
+                })
+                .width(Length::Fill)
+                .on_press(Message::SelectConnection(entry.id)),
             );
             if selected {
                 let mut actions = row![icon_only_button(
@@ -1305,8 +1310,7 @@ impl App {
             if let ConnState::Error(message) = &entry.state {
                 list = list.push(indent(1, text(message.as_str()).size(12).into()));
             }
-            let node_key = entry.id.to_string();
-            if !self.expanded.contains(&node_key) {
+            if !expanded_conn {
                 continue;
             }
             if let ConnState::Connected { catalog, .. } = &entry.state {
@@ -1377,7 +1381,7 @@ impl App {
         }
         let bar = self.title_bar(window, Some(self.menus()), None, Message::Exit, true);
         let toolbar = row![
-            text("RusioDB").size(26),
+            text("RusioDB").size(20),
             button(icon_button(Bootstrap::DatabaseAdd, "Nueva conexión"))
                 .on_press(Message::NewConnection),
             button("Nueva consulta").on_press(Message::NewQuery),
@@ -1389,7 +1393,8 @@ impl App {
         ]
         .spacing(12);
         let chrome = container(toolbar).padding([10, 14]);
-        let mut layout = column![chrome, horizontal_rule(1)].spacing(8);
+        let mut layout =
+            column![chrome, horizontal_rule(1).style(rule_style(self.dark))].spacing(8);
         if self.about {
             layout = layout.push(
                 container(
@@ -1435,7 +1440,7 @@ impl App {
             };
             let selected = index == self.selected;
             let chip = row![
-                button(text(label).size(13))
+                button(text(label).size(12))
                     .padding([6, 4])
                     .style(button::text)
                     .on_press(Message::SelectTab(index)),
@@ -1474,7 +1479,7 @@ impl App {
         let mut header_row = row![].spacing(1);
         for name in &tab.result.columns {
             header_row = header_row.push(
-                container(text(name.to_uppercase()).size(11).color(muted))
+                container(text(name.to_uppercase()).size(10).color(muted))
                     .padding([6, 10])
                     .width(200),
             );
@@ -1485,7 +1490,7 @@ impl App {
             for value in values {
                 let is_null = value == "NULL";
                 let is_numeric = !is_null && value.trim().parse::<f64>().is_ok();
-                let mut cell_text = text(value).size(13);
+                let mut cell_text = text(value).size(12);
                 if is_null {
                     cell_text = cell_text.color(muted);
                 }
@@ -1554,9 +1559,9 @@ impl App {
                     .on_action(Message::Edit)
                     .key_binding(Self::editor_binding)
                     .height(200),
-                text("Ejecuta una sentencia por vez · Vista de hasta 500 filas").size(13),
+                text("Ejecuta una sentencia por vez · Vista de hasta 500 filas").size(12),
                 row![
-                    text("Resultados").size(20),
+                    text("Resultados").size(15),
                     stats_row,
                     button("Copiar resultados").on_press_maybe(
                         (!tab.result.columns.is_empty()).then_some(Message::CopyResults)
@@ -1564,6 +1569,7 @@ impl App {
                 ]
                 .spacing(20)
                 .align_y(Alignment::Center),
+                horizontal_rule(1).style(rule_style(self.dark)),
                 results
             ]
             .spacing(10)
@@ -1572,8 +1578,8 @@ impl App {
         } else {
             container(
                 column![
-                    text("Sin conexión activa").size(22),
-                    text("Seleccioná una conexión en el panel izquierdo para empezar.").size(14),
+                    text("Sin conexión activa").size(18),
+                    text("Seleccioná una conexión en el panel izquierdo para empezar.").size(13),
                     button(icon_button(Bootstrap::DatabaseAdd, "Nueva conexión"))
                         .style(accent_button(self.dark))
                         .on_press(Message::NewConnection)
@@ -1592,15 +1598,16 @@ impl App {
                     container(
                         column![
                             row![
-                                text("Conexiones").size(20),
+                                text("Conexiones").size(15),
                                 button("Nueva")
                                     .style(button::text)
                                     .on_press(Message::NewConnection)
                             ]
                             .spacing(12),
+                            horizontal_rule(1).style(rule_style(self.dark)),
                             scrollable(self.connections_tree()).height(Length::Fill)
                         ]
-                        .spacing(12),
+                        .spacing(10),
                     )
                     .padding(Padding {
                         top: 14.0,
@@ -1611,7 +1618,7 @@ impl App {
                     .width(260)
                     .height(Length::Fill),
                 )
-                .push(vertical_rule(1));
+                .push(vertical_rule(1).style(rule_style(self.dark)));
         }
         layout = layout.push(
             content.push(
@@ -1625,11 +1632,13 @@ impl App {
                     .width(Length::Fill),
             ),
         );
-        layout = layout.push(horizontal_rule(1)).push(
-            container(text(&self.status).size(13))
-                .padding([8, 14])
-                .width(Length::Fill),
-        );
+        layout = layout
+            .push(horizontal_rule(1).style(rule_style(self.dark)))
+            .push(
+                container(text(&self.status).size(12))
+                    .padding([8, 14])
+                    .width(Length::Fill),
+            );
         column![
             bar,
             container(layout).padding(Padding {
@@ -1652,22 +1661,6 @@ fn tinted_box(color: Color) -> impl Fn(&Theme) -> container::Style {
 
 /// Píldora chica de color (fondo tenue + borde + texto del mismo color),
 /// para etiquetas cortas como el motor de una conexión o un estado puntual.
-fn badge<'a>(label: impl Into<String>, color: Color) -> Element<'a, Message> {
-    container(text(label.into()).size(11))
-        .padding([2, 8])
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(Color { a: 0.16, ..color }.into()),
-            border: Border {
-                color: Color { a: 0.45, ..color },
-                width: 1.0,
-                radius: 999.0.into(),
-            },
-            text_color: Some(color),
-            ..container::Style::default()
-        })
-        .into()
-}
-
 fn kind_icon(kind: ObjectKind) -> Bootstrap {
     match kind {
         ObjectKind::Table => Bootstrap::Table,
@@ -1676,6 +1669,20 @@ fn kind_icon(kind: ObjectKind) -> Bootstrap {
         ObjectKind::MaterializedView => Bootstrap::Layers,
         ObjectKind::Function => Bootstrap::Braces,
         ObjectKind::Procedure => Bootstrap::Gear,
+    }
+}
+
+/// Color por tipo de objeto (estilo Navicat: cada categoría del árbol se
+/// distingue por color además de forma, no solo por el texto de la carpeta).
+/// Independiente del color por driver — un mismo tipo se ve igual sin
+/// importar el motor.
+fn kind_color(kind: ObjectKind) -> Color {
+    match kind {
+        ObjectKind::Table | ObjectKind::Collection => Color::from_rgb8(0xE0, 0xA5, 0x1D),
+        ObjectKind::View => Color::from_rgb8(0x33, 0x8E, 0xD1),
+        ObjectKind::MaterializedView => Color::from_rgb8(0x6D, 0x4A, 0xE0),
+        ObjectKind::Function => Color::from_rgb8(0xC2, 0x3B, 0x8F),
+        ObjectKind::Procedure => Color::from_rgb8(0x5B, 0x6B, 0x7D),
     }
 }
 
@@ -1718,6 +1725,21 @@ fn accent_button(dark: bool) -> impl Fn(&Theme, button::Status) -> button::Style
             },
             shadow: Shadow::default(),
         }
+    }
+}
+
+/// Línea divisoria entre secciones (barra de herramientas/contenido, árbol/
+/// panel de consultas, contenido/barra de estado). Por defecto `Rule` usa
+/// `palette.background.strong`, el mismo color auto-derivado por iced que ya
+/// se descartó para paneles en `theme.rs` por verse deslavado — acá se usa el
+/// mismo `theme::border()` hecho a mano que ya delimitan menús y tarjetas,
+/// para que todas las separaciones del layout se vean coherentes entre sí.
+fn rule_style(dark: bool) -> impl Fn(&Theme) -> rule::Style {
+    move |_theme: &Theme| rule::Style {
+        color: theme::border(dark),
+        width: 1,
+        radius: 0.0.into(),
+        fill_mode: rule::FillMode::Full,
     }
 }
 
@@ -1804,7 +1826,7 @@ fn push_kind_folders<'a>(
             button(
                 row![
                     icon(caret).size(11),
-                    icon(kind_icon(kind)).size(12),
+                    icon(kind_icon(kind)).size(12).color(kind_color(kind)),
                     text(kind.folder_label()).size(13)
                 ]
                 .spacing(6)
@@ -1817,7 +1839,7 @@ fn push_kind_folders<'a>(
         if folder_expanded {
             for object in items {
                 let leaf = row![
-                    icon(kind_icon(kind)).size(11),
+                    icon(kind_icon(kind)).size(11).color(kind_color(kind)),
                     text(object.name.as_str()).size(13)
                 ]
                 .spacing(6)
