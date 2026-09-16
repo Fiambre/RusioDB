@@ -3,6 +3,7 @@ mod connections;
 mod db;
 mod drivers;
 mod theme;
+mod updater;
 
 fn main() -> iced::Result {
     iced::daemon(app::App::title, app::App::update, app::App::view)

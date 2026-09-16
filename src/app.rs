@@ -3,6 +3,7 @@ use crate::{
     db::QueryResult,
     drivers::{CatalogObject, Config, Database, Driver, ObjectKind},
     theme,
+    updater::{self, UpdateInfo},
 };
 use iced::widget::{
     button, checkbox, column, container, horizontal_rule, mouse_area, pick_list, row, scrollable,
@@ -147,6 +148,8 @@ pub struct App {
     show_explorer: bool,
     dark: bool,
     about: bool,
+    update_available: Option<UpdateInfo>,
+    updating: bool,
 }
 impl Default for App {
     fn default() -> Self {
@@ -174,6 +177,8 @@ impl Default for App {
             show_explorer: true,
             dark: true,
             about: false,
+            update_available: None,
+            updating: false,
         }
     }
 }
@@ -223,6 +228,12 @@ pub enum Message {
     ToggleExplorer,
     ToggleTheme,
     About,
+    CheckForUpdates,
+    UpdateChecked(Result<Option<UpdateInfo>, String>),
+    InstallUpdate,
+    UpdateDownloaded(Result<PathBuf, String>),
+    UpdateApplied(Result<(), String>),
+    DismissUpdateBanner,
     Exit,
     WindowClosed(window::Id),
     TitleBarPressed(window::Id),
@@ -263,6 +274,7 @@ impl App {
         if open_form_on_start {
             task = Task::batch([task, app.open_connection_window()]);
         }
+        task = Task::batch([task, Self::spawn_check_updates()]);
         (app, task)
     }
     pub fn theme(&self, _window: window::Id) -> Theme {
@@ -642,6 +654,46 @@ impl App {
             Message::ToggleExplorer => self.show_explorer = !self.show_explorer,
             Message::ToggleTheme => self.dark = !self.dark,
             Message::About => self.about = !self.about,
+            Message::CheckForUpdates => {
+                self.status = "Buscando actualizaciones…".into();
+                return Self::spawn_check_updates();
+            }
+            Message::UpdateChecked(Ok(Some(info))) => {
+                self.status = format!("Versión {} disponible.", info.version);
+                self.update_available = Some(info);
+            }
+            Message::UpdateChecked(Ok(None)) => {
+                self.status = "Ya tenés la última versión.".into();
+            }
+            Message::UpdateChecked(Err(error)) => {
+                self.status = format!("No se pudo comprobar actualizaciones: {error}");
+            }
+            Message::DismissUpdateBanner => self.update_available = None,
+            Message::InstallUpdate => {
+                if let Some(info) = self.update_available.clone() {
+                    self.updating = true;
+                    self.status = "Descargando actualización…".into();
+                    return Self::spawn_download_update(info.download_url);
+                }
+            }
+            Message::UpdateDownloaded(Ok(path)) => {
+                self.status = "Instalando actualización…".into();
+                return Self::spawn_apply_update(path);
+            }
+            Message::UpdateDownloaded(Err(error)) => {
+                self.updating = false;
+                self.status = format!("Error al descargar la actualización: {error}");
+            }
+            Message::UpdateApplied(Ok(())) => {
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ = std::process::Command::new(exe).spawn();
+                }
+                return iced::exit();
+            }
+            Message::UpdateApplied(Err(error)) => {
+                self.updating = false;
+                self.status = format!("Error al instalar la actualización: {error}");
+            }
             Message::Exit => return iced::exit(),
             Message::WindowClosed(id) => {
                 if self.is_main_window(id) {
@@ -757,6 +809,22 @@ impl App {
                 (id, result)
             },
             |(id, result)| Message::Connected(id, result),
+        )
+    }
+    fn spawn_check_updates() -> Task<Message> {
+        Task::perform(updater::check_for_update(), Message::UpdateChecked)
+    }
+    fn spawn_download_update(url: String) -> Task<Message> {
+        Task::perform(updater::download_update(url), Message::UpdateDownloaded)
+    }
+    fn spawn_apply_update(new_exe: PathBuf) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || updater::apply_update(&new_exe))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            Message::UpdateApplied,
         )
     }
     fn select_connection(&mut self, id: ConnectionId) -> Task<Message> {
@@ -999,7 +1067,10 @@ impl App {
             ),
             group(
                 "Ayuda",
-                vec![entry("Acerca de RusioDB", "", Message::About, true)],
+                vec![
+                    entry("Acerca de RusioDB", "", Message::About, true),
+                    entry("Buscar actualizaciones", "", Message::CheckForUpdates, true),
+                ],
             ),
         ])
         .style(menu_style(self.dark))
@@ -1323,8 +1394,26 @@ impl App {
             layout = layout.push(
                 container(
                     row![
-                        text("RusioDB 0.1 · Rust + Iced · SQLite / PostgreSQL / MySQL"),
+                        text(format!(
+                            "RusioDB {} · Rust + Iced · SQLite / PostgreSQL / MySQL / MongoDB",
+                            env!("CARGO_PKG_VERSION")
+                        )),
                         button("Cerrar").on_press(Message::About)
+                    ]
+                    .spacing(12),
+                )
+                .padding(12)
+                .style(card(theme::panel(self.dark), theme::border(self.dark))),
+            );
+        }
+        if let Some(info) = &self.update_available {
+            layout = layout.push(
+                container(
+                    row![
+                        text(format!("Nueva versión disponible: {}", info.version)),
+                        button("Instalar")
+                            .on_press_maybe((!self.updating).then_some(Message::InstallUpdate)),
+                        button("Cerrar").on_press(Message::DismissUpdateBanner),
                     ]
                     .spacing(12),
                 )
@@ -2014,5 +2103,15 @@ mod tests {
         // empezarían a escribir contraseñas de prueba en el llavero real del
         // desarrollador.
         assert!(!App::default().keyring_enabled);
+    }
+    #[test]
+    fn default_app_never_checks_for_updates() {
+        // Mismo espíritu que el test del keyring: el chequeo de
+        // actualizaciones solo se dispara desde `App::load()` (vía
+        // `spawn_check_updates` en el `Task::batch` inicial) o desde una
+        // acción explícita del usuario (`Message::CheckForUpdates`), nunca
+        // como efecto secundario de construir un `App` en un test.
+        assert!(App::default().update_available.is_none());
+        assert!(!App::default().updating);
     }
 }

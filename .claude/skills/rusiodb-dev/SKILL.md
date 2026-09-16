@@ -79,8 +79,11 @@ user-facing doc.
 | `src/db.rs` | SQLite-specific execution/catalog/value-to-text conversion, `ROW_LIMIT = 500` (shared by all four drivers), the engine-agnostic `QueryResult` struct. |
 | `src/connections.rs` | `ConnectionProfile` (deliberately has no password field), JSON persistence (`dirs::config_dir()/RusioDB/connections.json`), and the keyring `save_password`/`load_password`/`delete_password` functions. |
 | `src/theme.rs` | Palettes and hand-picked colors — see theming note above. |
-| `assets/cat.svg` | App logo. |
+| `src/updater.rs` | Windows autoupdate: `check_for_update`/`download_update`/`apply_update` against the GitHub Releases API, plus the pure `parse_release_json` (version compare, asset lookup) that's tested without network. |
+| `assets/cat.svg` / `assets/icon.ico` | App logo (SVG) and its rasterized Windows icon (generated once via `examples/gen_icon.rs`, embedded into the `.exe` by `build.rs` + `winresource`). |
 | `Cargo.toml` | See the MongoDB gotcha below before touching this file. |
+| `installer/rusiodb.iss` | Inno Setup script for the Windows installer (per-user install, no admin/UAC — required so the autoupdater can swap the `.exe` without elevation). |
+| `.github/workflows/release.yml` | Builds and publishes a GitHub Release (raw `.exe` + installer) whenever a `vX.Y.Z` tag is pushed. |
 | `README.md` / `PROJECT_CONTEXT.md` | User-facing docs and architecture notes, in Spanish, updated alongside every feature. |
 
 ## Gotchas that will cost you real time if you rediscover them cold

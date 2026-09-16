@@ -2,6 +2,16 @@
 
 Administrador de bases de datos de escritorio escrito en Rust con Iced. Interfaz compilada para Windows, macOS y Linux, con menús desplegables dentro de la ventana y drivers SQLite, PostgreSQL, MySQL y MongoDB.
 
+## Instalación (Windows)
+
+Descargá `RusioDBSetup-x86_64-pc-windows-msvc.exe` desde la [última versión publicada](https://github.com/Fiambre/RusioDB/releases/latest) y ejecutalo. Se instala por usuario (no pide permisos de administrador), agrega un acceso directo al menú Inicio y deja un desinstalador normal en Agregar o quitar programas.
+
+**El instalador y el ejecutable no están firmados digitalmente** (no hay certificado de firma de código). Es posible que Windows SmartScreen muestre un aviso de "editor no reconocido" la primera vez — hay que elegir "Más información" → "Ejecutar de todas formas". Esto es una limitación conocida, no un error.
+
+Una vez instalado, RusioDB busca actualizaciones nuevas al abrir (chequeo silencioso contra los Releases de GitHub) y también se puede forzar desde **Ayuda → Buscar actualizaciones**. Si hay una versión más nueva aparece un banner con un botón **Instalar** que descarga, reemplaza el ejecutable en uso y reinicia la app sola — no hace falta descargar el instalador de nuevo para actualizar.
+
+macOS y Linux todavía no tienen instalador ni autoupdate — hay que compilar desde el código fuente (ver abajo).
+
 ## Ejecutar
 
 ```sh
@@ -36,7 +46,7 @@ RusioDB soporta **varias conexiones abiertas a la vez**, cada una como un nodo i
 - **Conexión:** nueva conexión, editar/desconectar/eliminar la conexión seleccionada y actualizar su catálogo.
 - **Consulta:** nueva pestaña y ejecutar SQL.
 - **Ver:** mostrar/ocultar el árbol de conexiones y alternar tema claro/oscuro.
-- **Ayuda:** información de la aplicación.
+- **Ayuda:** información de la aplicación y buscar actualizaciones.
 
 Atajos: **Ctrl+N** crea una consulta, **Ctrl+Shift+N** abre el formulario de nueva conexión, **F5** o **Ctrl+Enter** ejecuta la pestaña activa, **F6** actualiza el catálogo de la conexión seleccionada. En macOS se usa Cmd en lugar de Ctrl.
 
@@ -68,17 +78,28 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --locked
 ```
 
-Las pruebas locales cubren SQLite, transacciones, NULL, errores, límite de filas, identificadores por dialecto, configuración de conexiones, conservación de pestañas, persistencia de perfiles sin contraseñas, el comportamiento independiente entre conexiones/pestañas simultáneas y el parseo de filtros/documentos de MongoDB. Las tres pruebas de integración remota están ignoradas por defecto y requieren servidores configurados.
+Las pruebas locales cubren SQLite, transacciones, NULL, errores, límite de filas, identificadores por dialecto, configuración de conexiones, conservación de pestañas, persistencia de perfiles sin contraseñas, el comportamiento independiente entre conexiones/pestañas simultáneas, el parseo de filtros/documentos de MongoDB y el parseo/comparación de versión del autoupdater. Las cuatro pruebas de integración remota están ignoradas por defecto y requieren red o servidores configurados.
 
-Para ejecutarlas, define variables de entorno con prefijo `RUSIODB_PG_`, `RUSIODB_MYSQL_` o `RUSIODB_MONGO_`: `HOST`, `PORT`, `DATABASE`, `USER`, `PASSWORD`, `TLS`. `PORT` toma el valor habitual si no se define; `TLS` solo se desactiva con el valor `false`. La prueba de Mongo además requiere `RUSIODB_MONGO_COLLECTION` con el nombre de una colección existente. Las pruebas ejecutan consultas de lectura y comprueban el catálogo y los errores.
+Para las de base de datos, define variables de entorno con prefijo `RUSIODB_PG_`, `RUSIODB_MYSQL_` o `RUSIODB_MONGO_`: `HOST`, `PORT`, `DATABASE`, `USER`, `PASSWORD`, `TLS`. `PORT` toma el valor habitual si no se define; `TLS` solo se desactiva con el valor `false`. La prueba de Mongo además requiere `RUSIODB_MONGO_COLLECTION` con el nombre de una colección existente. Las pruebas ejecutan consultas de lectura y comprueban el catálogo y los errores. La prueba de actualizaciones solo necesita salida a internet, pega contra la API real de GitHub.
 
 ```sh
 cargo test postgres_integration -- --ignored
 cargo test mysql_integration -- --ignored
 cargo test mongodb_integration -- --ignored
+cargo test update_check_integration -- --ignored
 ```
 
 La validación de conexiones reales PostgreSQL/MySQL/MongoDB, de interacción visual y de macOS/Linux requiere sus respectivos entornos.
+
+## Publicar una versión (Windows)
+
+1. Bump manual de `version` en `Cargo.toml` (y `Cargo.lock`, con `cargo check`), commitear.
+2. Taguear `vX.Y.Z` (mismo número, con el prefijo `v`) y pushear el tag.
+3. `.github/workflows/release.yml` compila, arma `RusioDBSetup-x86_64-pc-windows-msvc.exe` con Inno Setup y publica un Release de GitHub con ese instalador más el `.exe` crudo (`rusiodb-x86_64-pc-windows-msvc.exe`) que usa el autoupdater.
+
+Para compilar el instalador localmente hace falta [Inno Setup 6](https://jrsoftware.org/isinfo.php) instalado y correr `iscc installer\rusiodb.iss` (con la variable de entorno `RUSIODB_VERSION` seteada) desde la raíz del repo, después de un `cargo build --release --locked`.
+
+El ícono de la app (`assets/icon.ico`) se genera una vez desde `assets/cat.svg` con `cargo run --example gen_icon` y se commitea; no hace falta regenerarlo salvo que cambie el logo.
 
 ## Límites actuales
 
@@ -94,4 +115,9 @@ Las pestañas no se persisten al cerrar (los perfiles de conexión y, opcionalme
 - `src/drivers.rs`: interfaz común, configuración y adaptadores PostgreSQL/MySQL/SQLite/MongoDB.
 - `src/db.rs`: ejecución y catálogo SQLite.
 - `src/connections.rs`: perfiles de conexión guardados y persistencia en JSON; contraseñas opcionales en el almacén de credenciales del sistema (no en el JSON).
+- `src/updater.rs`: chequeo/descarga/aplicación de actualizaciones contra los Releases de GitHub.
 - `src/main.rs`: arranque de la aplicación y carga de perfiles guardados.
+- `build.rs`: embebe `assets/icon.ico` en el `.exe` de Windows.
+- `examples/gen_icon.rs`: genera `assets/icon.ico` desde `assets/cat.svg` (uso único, no se corre en cada build).
+- `installer/rusiodb.iss`: script de Inno Setup para el instalador de Windows.
+- `.github/workflows/release.yml`: compila y publica un Release de GitHub al pushear un tag `vX.Y.Z`.

@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extraer versión del tag
+        shell: bash
+        run: echo "RUSIODB_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Instalar toolchain de Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Compilar binario de release
+        run: cargo build --release --locked
+
+      - name: Renombrar el ejecutable con el target-triple
+        shell: bash
+        run: cp target/release/rusiodb.exe target/release/rusiodb-x86_64-pc-windows-msvc.exe
+
+      - name: Compilar el instalador con Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.9
+        with:
+          path: installer/rusiodb.iss
+          install_latest: true
+        env:
+          RUSIODB_VERSION: ${{ env.RUSIODB_VERSION }}
+
+      - name: Crear el Release y subir los assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "RusioDB ${{ github.ref_name }}" \
+            --generate-notes \
+            target/release/rusiodb-x86_64-pc-windows-msvc.exe \
+            installer/Output/RusioDBSetup-x86_64-pc-windows-msvc.exe
