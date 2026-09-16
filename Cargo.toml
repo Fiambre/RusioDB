@@ -1,6 +1,6 @@
 [package]
 name = "rusiodb"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Administrador de bases de datos con interfaz nativa"
 
