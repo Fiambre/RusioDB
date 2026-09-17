@@ -61,14 +61,51 @@ user-facing doc.
   `Error`), and each query tab has its own `running` flag. There is no
   global "busy" flag anywhere — don't reintroduce one. A query running on
   one connection/tab must never block another.
-- **Custom theming** (`src/theme.rs`): `Theme::custom(name, Palette)` for
-  dark/light, plus hand-picked `panel()` / `alt_row()` / `border()` /
-  `accent()` / `accent_strong()` color functions. **Do not** reach for
-  iced's auto-derived `extended_palette().background.weak/strong` for
-  panel/row backgrounds — it blends toward the text color in linear RGB
-  space, which looks washed-out gray on a dark theme with bright text.
-  This was found and fixed once already; the hand-picked functions in
-  `theme.rs` are the deliberate replacement.
+- **Custom theming** (`src/theme/`): the app's `Theme` is its own local
+  type (`struct Theme { dark: bool }`, in `src/theme/mod.rs`), not
+  `iced::Theme::custom(...)`. Rust's orphan rule blocks implementing a
+  foreign trait (iced's per-widget `Catalog`) for a foreign type
+  (`iced::Theme`), so with the built-in `Theme` every call site had to
+  remember to pass a hand-written `.style(...)` closure — twice someone
+  forgot, and both times iced's auto-derived color (which blends toward
+  the text color in linear RGB space) came out washed-out gray on the dark
+  theme (panel backgrounds, then section dividers). The fix, modeled on
+  https://github.com/squidowl/halloy (another Iced desktop app): a local
+  `Theme` type with one `impl <widget>::Catalog for Theme` per file under
+  `src/theme/` (`button.rs`, `container.rs`, `rule.rs`, `scrollable.rs`,
+  `svg.rs`, `text.rs`, `text_editor.rs`, `text_input.rs`, `checkbox.rs`,
+  `pick_list.rs`, `overlay_menu.rs` for `pick_list`'s internal dropdown,
+  `menu_bar.rs` for `iced_aw`'s menu-bar `Catalog`) — so any widget with no
+  explicit `.style()` call still gets the right colors via
+  `Catalog::default()`, instead of silently falling back to iced's washed-out
+  default. Plain `fn(dark: bool) -> Color` helpers (`panel`, `alt_row`,
+  `border`, `accent`, `accent_strong`, `primary`, `success`, `danger`,
+  `muted`, ...) still live in `theme/mod.rs` exactly as before — only the
+  wiring into widgets changed.
+  **Gotcha if you extend this**: iced 0.13.1 (the version pinned here) has
+  no `iced::theme::Base` trait — Halloy's current tree targets a newer
+  iced where `Base` replaced the older `DefaultStyle`. The trait actually
+  needed here is `iced::daemon::{Appearance, DefaultStyle}` (one method,
+  `fn default_style(&self) -> Appearance`). Don't copy Halloy's `impl Base`
+  literally; check the pinned iced version's real trait first.
+  **Second gotcha**: `iced::Element<'a, Message>` / `iced_widget::Column<'a,
+  Message>` default their `Theme` generic param to `iced::Theme`. `app.rs`
+  works around this with two local type aliases near the top
+  (`type Element<'a, Message> = iced::Element<'a, Message, Theme>;`, same
+  for `Column`) so the ~40 existing `Element<'a, Message>` signatures don't
+  need touching. But any function with an explicit return type written as
+  `iced::widget::Text<'a>` or `iced::widget::Row<'a, Message>` (2-arg form)
+  bypasses that alias and silently reverts to `iced::Theme` — this bit
+  `icon()`/`icon_button()` once already; if you add a new small widget
+  helper, give its return type the extra `Theme` argument
+  (`iced::widget::Text<'a, Theme>`) or route it through the local
+  `Element`/`Column` aliases instead.
+  **Third gotcha**: `pick_list::Catalog: overlay::menu::Catalog:
+  scrollable::Catalog` (iced_widget's own internal supertrait chain) means
+  writing bare `Self::Class<'a>` inside those impls is ambiguous (multiple
+  in-scope traits share the associated type name `Class`) — use fully
+  qualified syntax (`<Self as Catalog>::Class<'a>`) in those two files
+  specifically (`theme/pick_list.rs`, `theme/overlay_menu.rs`).
 
 ## Key files
 
@@ -78,7 +115,7 @@ user-facing doc.
 | `src/drivers.rs` | `Driver` enum, `Config`, the `Database` enum with `connect`/`catalog`/`execute` per engine, `ObjectKind`, `CatalogObject::preview`, and the MongoDB-specific helpers (`parse_mongo_filter`, `documents_to_result`, `bson_cell`, `percent_encode_userinfo`). Tests include 3 `#[ignore]`d remote-integration tests. |
 | `src/db.rs` | SQLite-specific execution/catalog/value-to-text conversion, `ROW_LIMIT = 500` (shared by all four drivers), the engine-agnostic `QueryResult` struct. |
 | `src/connections.rs` | `ConnectionProfile` (deliberately has no password field), JSON persistence (`dirs::config_dir()/RusioDB/connections.json`), and the keyring `save_password`/`load_password`/`delete_password` functions. |
-| `src/theme.rs` | Palettes and hand-picked colors — see theming note above. |
+| `src/theme/` | The app's own `Theme` type + color palette (`mod.rs`) and one `Catalog` impl per widget, one file each — see theming note above. |
 | `src/updater.rs` | Windows autoupdate: `check_for_update`/`download_update`/`apply_update` against the GitHub Releases API, plus the pure `parse_release_json` (version compare, asset lookup) that's tested without network. |
 | `assets/cat.svg` / `assets/icon.ico` | App logo (SVG) and its rasterized Windows icon (generated once via `examples/gen_icon.rs`, embedded into the `.exe` by `build.rs` + `winresource`). |
 | `Cargo.toml` | See the MongoDB gotcha below before touching this file. |

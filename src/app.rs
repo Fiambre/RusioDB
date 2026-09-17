@@ -2,18 +2,18 @@ use crate::{
     connections::{self, ConnectionProfile, ConnectionsFile},
     db::QueryResult,
     drivers::{CatalogObject, Config, Database, Driver, ObjectKind},
-    theme,
+    theme::{self, Theme},
     updater::{self, UpdateInfo},
 };
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, mouse_area, pick_list, row, rule,
-    scrollable, svg, text, text_editor, text_input, tooltip, vertical_rule, Column, Space,
+    button, checkbox, column, container, horizontal_rule, mouse_area, pick_list, row, scrollable,
+    svg, text, text_editor, text_input, tooltip, vertical_rule, Space,
 };
 use iced::{
-    alignment::Horizontal, keyboard, window, Alignment, Border, Color, Element, Length, Padding,
-    Shadow, Size, Subscription, Task, Theme, Vector,
+    alignment::Horizontal, keyboard, window, Alignment, Border, Color, Length, Padding, Size,
+    Subscription, Task,
 };
-use iced_aw::menu::{Item, Menu, MenuBar, Style as MenuStyle};
+use iced_aw::menu::{Item, Menu, MenuBar};
 use iced_fonts::{Bootstrap, BOOTSTRAP_FONT};
 use std::{
     collections::HashSet,
@@ -21,6 +21,13 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+/// Alias locales: `iced::Element`/`iced_widget::Column` traen `Theme =
+/// iced::Theme` como default genérico. Redefinirlos acá alcanza para que
+/// todas las firmas existentes (`Element<'a, Message>`, `Column<'a,
+/// Message>`) usen nuestro propio tipo `Theme` sin tocarlas una por una.
+type Element<'a, Message> = iced::Element<'a, Message, Theme>;
+type Column<'a, Message> = iced::widget::Column<'a, Message, Theme>;
 
 type SharedDatabase = Arc<Mutex<Database>>;
 type ConnectionId = u64;
@@ -36,7 +43,7 @@ const KIND_ORDER: [ObjectKind; 6] = [
     ObjectKind::Procedure,
 ];
 
-fn icon<'a>(glyph: Bootstrap) -> iced::widget::Text<'a> {
+fn icon<'a>(glyph: Bootstrap) -> iced::widget::Text<'a, Theme> {
     text(glyph.to_string()).font(BOOTSTRAP_FONT)
 }
 
@@ -55,7 +62,7 @@ fn logo(dark: bool) -> Element<'static, Message> {
         .into()
 }
 
-fn icon_button<'a>(glyph: Bootstrap, label: &'a str) -> iced::widget::Row<'a, Message> {
+fn icon_button<'a>(glyph: Bootstrap, label: &'a str) -> iced::widget::Row<'a, Message, Theme> {
     row![icon(glyph).size(14), text(label)]
         .spacing(6)
         .align_y(Alignment::Center)
@@ -66,11 +73,11 @@ fn icon_button<'a>(glyph: Bootstrap, label: &'a str) -> iced::widget::Row<'a, Me
 fn icon_only_button(glyph: Bootstrap, hint: &str, message: Message) -> Element<'_, Message> {
     tooltip(
         button(icon(glyph).size(13))
-            .style(button::text)
+            .style(theme::button::text)
             .on_press(message),
         container(text(hint).size(12))
             .padding(6)
-            .style(container::rounded_box),
+            .style(theme::container::tooltip),
         tooltip::Position::Top,
     )
     .into()
@@ -281,11 +288,7 @@ impl App {
         self.active_theme()
     }
     fn active_theme(&self) -> Theme {
-        if self.dark {
-            theme::dark()
-        } else {
-            theme::light()
-        }
+        Theme { dark: self.dark }
     }
     pub fn title(&self, window: window::Id) -> String {
         if Some(window) == self.connection_window {
@@ -958,8 +961,7 @@ impl App {
         );
         let catalog_busy = selected_entry.map(|e| e.catalog_busy).unwrap_or(false);
         let has_selection = selected_entry.is_some();
-        let current_theme = self.active_theme();
-        let muted = current_theme.extended_palette().background.strong.color;
+        let muted = theme::muted(self.dark);
         let entry = move |label: &'static str, shortcut: &'static str, message, enabled: bool| {
             let mut row_content =
                 row![text(label).size(13).width(Length::Fill)].align_y(Alignment::Center);
@@ -969,17 +971,16 @@ impl App {
             Item::new(
                 button(row_content)
                     .width(260)
-                    .style(button::text)
+                    .style(theme::button::text)
                     .on_press_maybe(enabled.then_some(message)),
             )
         };
-        let dark = self.dark;
-        let divider = move || Item::new(horizontal_rule(1).style(rule_style(dark)));
+        let divider = || Item::new(horizontal_rule(1));
         let group = |label, items| {
             Item::with_menu(
                 button(text(label).size(13))
                     .padding([6, 10])
-                    .style(button::text)
+                    .style(theme::button::text)
                     .on_press(Message::Noop),
                 Menu::new(items).max_width(280.0).spacing(2.0),
             )
@@ -1075,7 +1076,6 @@ impl App {
                 ],
             ),
         ])
-        .style(menu_style(self.dark))
         .into()
     }
 
@@ -1110,12 +1110,11 @@ impl App {
             button(icon(glyph).size(12))
                 .padding([6, 10])
                 .style(move |theme: &Theme, status| {
-                    let palette = theme.extended_palette();
-                    let mut style = button::text(theme, status);
+                    let mut style = theme::button::text(theme, status);
                     if danger && matches!(status, button::Status::Hovered | button::Status::Pressed)
                     {
-                        style.background = Some(palette.danger.base.color.into());
-                        style.text_color = palette.danger.base.text;
+                        style.background = Some(theme::danger(theme.dark).into());
+                        style.text_color = Color::WHITE;
                     }
                     style
                 })
@@ -1147,7 +1146,7 @@ impl App {
                 .align_y(Alignment::Center)
                 .height(36),
         )
-        .style(tinted_box(theme::panel(self.dark)))
+        .style(theme::container::tinted(theme::panel(self.dark)))
         .into()
     }
 
@@ -1207,10 +1206,10 @@ impl App {
             row![
                 button(icon_button(Bootstrap::Save, "Guardar")).on_press(Message::SaveProfile),
                 button(icon_button(Bootstrap::PlugFill, "Conectar"))
-                    .style(accent_button(self.dark))
+                    .style(theme::button::accent)
                     .on_press(Message::ConnectProfile),
                 button(icon_button(Bootstrap::XLg, "Cancelar"))
-                    .style(button::secondary)
+                    .style(theme::button::secondary)
                     .on_press(Message::CloseConnectionForm),
             ]
             .spacing(12),
@@ -1220,21 +1219,18 @@ impl App {
                 .size(13),
         );
         if let Some(error) = &self.form_error {
-            fields = fields.push(
-                text(error)
-                    .size(13)
-                    .color(self.active_theme().extended_palette().danger.base.color),
-            );
+            fields = fields.push(text(error).size(13).color(theme::danger(self.dark)));
         }
         container(fields)
             .padding(16)
-            .style(card(theme::panel(self.dark), theme::border(self.dark)))
+            .style(theme::container::card(
+                theme::panel(self.dark),
+                theme::border(self.dark),
+            ))
             .into()
     }
 
     fn connections_tree(&self) -> Element<'_, Message> {
-        let current_theme = self.active_theme();
-        let palette = current_theme.extended_palette();
         let mut list = column![].spacing(4);
         if self.connections.is_empty() {
             list = list.push(text("Sin conexiones guardadas").size(13));
@@ -1249,10 +1245,10 @@ impl App {
                 Bootstrap::CaretRightFill
             };
             let (status_glyph, status_color) = match &entry.state {
-                ConnState::Disconnected => (Bootstrap::Circle, palette.background.strong.color),
-                ConnState::Connecting => (Bootstrap::CircleFill, palette.primary.base.color),
-                ConnState::Connected { .. } => (Bootstrap::CircleFill, palette.success.base.color),
-                ConnState::Error(_) => (Bootstrap::CircleFill, palette.danger.base.color),
+                ConnState::Disconnected => (Bootstrap::Circle, theme::muted(self.dark)),
+                ConnState::Connecting => (Bootstrap::CircleFill, theme::primary(self.dark)),
+                ConnState::Connected { .. } => (Bootstrap::CircleFill, theme::success(self.dark)),
+                ConnState::Error(_) => (Bootstrap::CircleFill, theme::danger(self.dark)),
             };
             list = list.push(
                 button(
@@ -1268,9 +1264,9 @@ impl App {
                     .align_y(Alignment::Center),
                 )
                 .style(if selected {
-                    button::primary
+                    theme::button::selected_row
                 } else {
-                    button::text
+                    theme::button::text
                 })
                 .width(Length::Fill)
                 .on_press(Message::SelectConnection(entry.id)),
@@ -1338,7 +1334,7 @@ impl App {
                                 .spacing(6)
                                 .align_y(Alignment::Center),
                             )
-                            .style(button::text)
+                            .style(theme::button::text)
                             .on_press(Message::ToggleExpanded(schema_key.clone()))
                             .into(),
                         ));
@@ -1386,15 +1382,14 @@ impl App {
                 .on_press(Message::NewConnection),
             button("Nueva consulta").on_press(Message::NewQuery),
             button(icon_button(Bootstrap::PlayFill, "Ejecutar  F5"))
-                .style(accent_button(self.dark))
+                .style(theme::button::accent)
                 .on_press_maybe(self.can_run().then_some(Message::Run)),
             button(icon_button(Bootstrap::ArrowClockwise, "Actualizar  F6"))
                 .on_press_maybe(self.refresh_enabled().then_some(Message::Refresh))
         ]
         .spacing(12);
         let chrome = container(toolbar).padding([10, 14]);
-        let mut layout =
-            column![chrome, horizontal_rule(1).style(rule_style(self.dark))].spacing(8);
+        let mut layout = column![chrome, horizontal_rule(1)].spacing(8);
         if self.about {
             layout = layout.push(
                 container(
@@ -1408,7 +1403,10 @@ impl App {
                     .spacing(12),
                 )
                 .padding(12)
-                .style(card(theme::panel(self.dark), theme::border(self.dark))),
+                .style(theme::container::card(
+                    theme::panel(self.dark),
+                    theme::border(self.dark),
+                )),
             );
         }
         if let Some(info) = &self.update_available {
@@ -1423,7 +1421,10 @@ impl App {
                     .spacing(12),
                 )
                 .padding(12)
-                .style(card(theme::panel(self.dark), theme::border(self.dark))),
+                .style(theme::container::card(
+                    theme::panel(self.dark),
+                    theme::border(self.dark),
+                )),
             );
         }
         let any_connected = self
@@ -1442,19 +1443,18 @@ impl App {
             let chip = row![
                 button(text(label).size(12))
                     .padding([6, 4])
-                    .style(button::text)
+                    .style(theme::button::text)
                     .on_press(Message::SelectTab(index)),
                 button(icon(Bootstrap::XLg).size(9))
                     .padding(4)
-                    .style(button::text)
+                    .style(theme::button::text)
                     .on_press_maybe(can_close_tabs.then_some(Message::CloseTab(index))),
             ]
             .spacing(2)
             .align_y(Alignment::Center);
             tab_bar = tab_bar.push(container(chip).padding([2, 8]).style(move |theme: &Theme| {
-                let palette = theme.extended_palette();
                 container::Style {
-                    background: selected.then_some(palette.primary.weak.color.into()),
+                    background: selected.then_some(theme::primary_weak(theme.dark).into()),
                     border: Border {
                         radius: iced::border::Radius {
                             top_left: 6.0,
@@ -1469,12 +1469,10 @@ impl App {
             }));
         }
         let tab = &self.tabs[self.selected];
-        let current_theme = self.active_theme();
-        let palette = current_theme.extended_palette();
         let header_bg = theme::panel(self.dark);
         let alt_row_bg = theme::alt_row(self.dark);
-        let muted = palette.background.strong.color;
-        let danger = palette.danger.base.color;
+        let muted = theme::muted(self.dark);
+        let danger = theme::danger(self.dark);
 
         let mut header_row = row![].spacing(1);
         for name in &tab.result.columns {
@@ -1484,7 +1482,8 @@ impl App {
                     .width(200),
             );
         }
-        let mut grid = column![container(header_row).style(tinted_box(header_bg))].spacing(1);
+        let mut grid =
+            column![container(header_row).style(theme::container::tinted(header_bg))].spacing(1);
         for (index, values) in tab.result.rows.iter().enumerate() {
             let mut cells = row![].spacing(1);
             for value in values {
@@ -1502,7 +1501,7 @@ impl App {
             }
             let mut data_row = container(cells);
             if index % 2 == 1 {
-                data_row = data_row.style(tinted_box(alt_row_bg));
+                data_row = data_row.style(theme::container::tinted(alt_row_bg));
             }
             grid = grid.push(data_row);
         }
@@ -1569,7 +1568,7 @@ impl App {
                 ]
                 .spacing(20)
                 .align_y(Alignment::Center),
-                horizontal_rule(1).style(rule_style(self.dark)),
+                horizontal_rule(1),
                 results
             ]
             .spacing(10)
@@ -1581,7 +1580,7 @@ impl App {
                     text("Sin conexión activa").size(18),
                     text("Seleccioná una conexión en el panel izquierdo para empezar.").size(13),
                     button(icon_button(Bootstrap::DatabaseAdd, "Nueva conexión"))
-                        .style(accent_button(self.dark))
+                        .style(theme::button::accent)
                         .on_press(Message::NewConnection)
                 ]
                 .spacing(12)
@@ -1601,11 +1600,11 @@ impl App {
                                 text("Conexiones").size(15),
                                 button(text("Nueva").size(13))
                                     .padding([3, 10])
-                                    .style(ghost_button(self.dark))
+                                    .style(theme::button::ghost)
                                     .on_press(Message::NewConnection)
                             ]
                             .spacing(12),
-                            horizontal_rule(1).style(rule_style(self.dark)),
+                            horizontal_rule(1),
                             scrollable(self.connections_tree()).height(Length::Fill)
                         ]
                         .spacing(10),
@@ -1619,7 +1618,7 @@ impl App {
                     .width(260)
                     .height(Length::Fill),
                 )
-                .push(vertical_rule(1).style(rule_style(self.dark)));
+                .push(vertical_rule(1));
         }
         layout = layout.push(
             content.push(
@@ -1633,13 +1632,11 @@ impl App {
                     .width(Length::Fill),
             ),
         );
-        layout = layout
-            .push(horizontal_rule(1).style(rule_style(self.dark)))
-            .push(
-                container(text(&self.status).size(12))
-                    .padding([8, 14])
-                    .width(Length::Fill),
-            );
+        layout = layout.push(horizontal_rule(1)).push(
+            container(text(&self.status).size(12))
+                .padding([8, 14])
+                .width(Length::Fill),
+        );
         column![
             bar,
             container(layout).padding(Padding {
@@ -1650,13 +1647,6 @@ impl App {
             })
         ]
         .into()
-    }
-}
-
-fn tinted_box(color: Color) -> impl Fn(&Theme) -> container::Style {
-    move |_theme: &Theme| container::Style {
-        background: Some(color.into()),
-        ..container::Style::default()
     }
 }
 
@@ -1696,145 +1686,6 @@ fn driver_badge_color(driver: Driver) -> Color {
     }
 }
 
-/// Estilo de botón para la única acción de acento de cada pantalla (ver
-/// [`theme::accent`]). Mismo tratamiento hover/pressed/disabled que
-/// `button::primary`, pero con el color de acento en vez del azul del tema.
-fn accent_button(dark: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme: &Theme, status: button::Status| {
-        let (background, text_color) = match status {
-            button::Status::Hovered | button::Status::Pressed => {
-                (theme::accent_strong(dark), Color::WHITE)
-            }
-            button::Status::Disabled => (
-                Color {
-                    a: 0.35,
-                    ..theme::accent(dark)
-                },
-                Color {
-                    a: 0.6,
-                    ..Color::WHITE
-                },
-            ),
-            button::Status::Active => (theme::accent(dark), Color::WHITE),
-        };
-        button::Style {
-            background: Some(background.into()),
-            text_color,
-            border: Border {
-                radius: 6.0.into(),
-                ..Border::default()
-            },
-            shadow: Shadow::default(),
-        }
-    }
-}
-
-/// Botón "fantasma" para una acción secundaria puntual dentro de un
-/// encabezado de sección (ej. "Nueva" junto a "Conexiones") — con
-/// `button::text` no tiene fondo ni borde en reposo y se confunde con texto
-/// plano. Este estilo agrega un borde y un fondo tenue siempre visibles
-/// (no solo al pasar el mouse), sin llegar al peso visual de un botón sólido
-/// como los de la barra de herramientas.
-fn ghost_button(dark: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |_theme: &Theme, status: button::Status| {
-        let (background_alpha, border_color) = match status {
-            button::Status::Hovered | button::Status::Pressed => (0.22, theme::accent(dark)),
-            button::Status::Disabled => (
-                0.04,
-                Color {
-                    a: 0.4,
-                    ..theme::border(dark)
-                },
-            ),
-            button::Status::Active => (0.1, theme::accent(dark)),
-        };
-        button::Style {
-            background: Some(
-                Color {
-                    a: background_alpha,
-                    ..theme::accent(dark)
-                }
-                .into(),
-            ),
-            text_color: theme::accent(dark),
-            border: Border {
-                color: border_color,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            shadow: Shadow::default(),
-        }
-    }
-}
-
-/// Línea divisoria entre secciones (barra de herramientas/contenido, árbol/
-/// panel de consultas, contenido/barra de estado). Por defecto `Rule` usa
-/// `palette.background.strong`, el mismo color auto-derivado por iced que ya
-/// se descartó para paneles en `theme.rs` por verse deslavado — acá se usa el
-/// mismo `theme::border()` hecho a mano que ya delimitan menús y tarjetas,
-/// para que todas las separaciones del layout se vean coherentes entre sí.
-fn rule_style(dark: bool) -> impl Fn(&Theme) -> rule::Style {
-    move |_theme: &Theme| rule::Style {
-        color: theme::border(dark),
-        width: 1,
-        radius: 0.0.into(),
-        fill_mode: rule::FillMode::Full,
-    }
-}
-
-/// Panel tipo tarjeta: fondo, borde sutil, esquinas redondeadas y una sombra
-/// leve para dar profundidad — en vez de un bloque de color plano flotando en
-/// el vacío.
-fn card(background: Color, border_color: Color) -> impl Fn(&Theme) -> container::Style {
-    move |_theme: &Theme| container::Style {
-        background: Some(background.into()),
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: 10.0.into(),
-        },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
-            offset: Vector::new(0.0, 2.0),
-            blur_radius: 10.0,
-        },
-        ..container::Style::default()
-    }
-}
-
-/// Estilo del menú (Archivo/Edición/...): la barra en sí queda transparente
-/// porque ya vive dentro de la tarjeta de "chrome"; el desplegable flotante
-/// sí recibe fondo, borde y sombra propios, coherentes con el resto de la UI
-/// en lugar del gris genérico por defecto de `iced_aw`.
-fn menu_style(dark: bool) -> impl Fn(&Theme, iced_aw::style::Status) -> MenuStyle {
-    move |theme: &Theme, _status: iced_aw::style::Status| {
-        let palette = theme.extended_palette();
-        MenuStyle {
-            bar_background: Color::TRANSPARENT.into(),
-            bar_border: Border::default(),
-            bar_shadow: Shadow::default(),
-            bar_background_expand: Padding::ZERO,
-            menu_background: theme::panel(dark).into(),
-            menu_border: Border {
-                color: theme::border(dark),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            menu_shadow: Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
-                offset: Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            menu_background_expand: Padding::from(6),
-            path: palette.primary.weak.color.into(),
-            path_border: Border {
-                radius: 6.0.into(),
-                ..Border::default()
-            },
-        }
-    }
-}
-
 fn indent<'a>(depth: usize, content: Element<'a, Message>) -> Element<'a, Message> {
     row![Space::with_width((depth as f32) * 16.0), content].into()
 }
@@ -1871,7 +1722,7 @@ fn push_kind_folders<'a>(
                 .spacing(6)
                 .align_y(Alignment::Center),
             )
-            .style(button::text)
+            .style(theme::button::text)
             .on_press(Message::ToggleExpanded(key.clone()))
             .into(),
         ));
@@ -1885,7 +1736,7 @@ fn push_kind_folders<'a>(
                 .align_y(Alignment::Center);
                 let row_content: Element<'a, Message> = if kind.is_previewable() {
                     button(leaf)
-                        .style(button::text)
+                        .style(theme::button::text)
                         .width(Length::Fill)
                         .on_press(Message::Preview(id, object.clone()))
                         .into()

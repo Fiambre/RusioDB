@@ -19,6 +19,7 @@ El objetivo inmediato es construir un administrador usable para SQLite, PostgreS
 - Ícono de Windows: `assets/icon.ico` se genera una vez desde `assets/cat.svg` con `examples/gen_icon.rs` (usa `resvg`/`ico` como `[dev-dependencies]`, no afectan el binario final) y se embebe en el `.exe` vía `build.rs` + `winresource` (sucesor mantenido de `winres`), gateado a `#[cfg(target_os = "windows")]`.
 - Plataforma objetivo: Windows, macOS y Linux. El instalador y el autoupdater están implementados solo para Windows por ahora (ver "Riesgos y límites conocidos").
 - Dependencias bloqueadas: `Cargo.lock` debe mantenerse actualizado y los comandos de CI/desarrollo deben usar `--locked`.
+- Theming: tipo `Theme` propio (`src/theme/`, un `struct { dark: bool }`) en vez de `iced::Theme::custom(...)`, con un `impl Catalog` por widget usado (uno por archivo, inspirado en https://github.com/squidowl/halloy). Ver "Sistema de temas" más abajo.
 
 Iced dibuja sus controles y mantiene la interfaz en Rust. El código usa un modelo de estado y mensajes: los eventos de la UI producen `Message`, `App::update` modifica el estado o crea tareas, y `App::view` dibuja la vista actual.
 
@@ -29,6 +30,7 @@ Iced dibuja sus controles y mantiene la interfaz en Rust. El código usa un mode
 - [`src/drivers.rs`](src/drivers.rs): abstracción `Database`, configuración `Config`, enum `Driver`, catálogo `CatalogObject`/`ObjectKind` y adaptadores concretos para SQLite, PostgreSQL, MySQL y MongoDB.
 - [`src/db.rs`](src/db.rs): operaciones específicas de SQLite, conversión de valores a texto, catálogo y límite de filas.
 - [`src/connections.rs`](src/connections.rs): perfiles de conexión guardados (`ConnectionProfile`) y persistencia en JSON (`ConnectionsFile`, nunca incluye contraseñas), más el guardado opcional de contraseñas en el almacén de credenciales del sistema (`save_password`/`load_password`/`delete_password`).
+- [`src/theme/`](src/theme/mod.rs): tipo `Theme` de la app y la paleta de colores (`mod.rs`), más un `impl Catalog` por widget usado en un archivo propio (`button.rs`, `container.rs`, `rule.rs`, `scrollable.rs`, etc.) — ver "Sistema de temas".
 - [`src/updater.rs`](src/updater.rs): chequeo (`check_for_update`), descarga (`download_update`) y aplicación (`apply_update`) de actualizaciones contra los Releases de GitHub. `parse_release_json` es la función pura (sin red) que decide si hay una versión más nueva y arma `UpdateInfo`.
 - [`build.rs`](build.rs): embebe `assets/icon.ico` en el `.exe` de Windows vía `winresource`.
 - [`examples/gen_icon.rs`](examples/gen_icon.rs): genera `assets/icon.ico` desde `assets/cat.svg`; uso único (`cargo run --example gen_icon`), no corre en cada build.
@@ -93,6 +95,51 @@ El flujo de actualización vive en `src/updater.rs`, con estado en `App` (`updat
 `App::default()` (tests) nunca dispara este chequeo: `update_available`/`updating` arrancan en `None`/`false` y ningún camino fuera de `App::load()`/una acción explícita del usuario los toca — mismo principio que `connections_path`/`keyring_enabled` para el JSON/llavero.
 
 El ícono de la app se genera una vez con `examples/gen_icon.rs` (rasteriza `assets/cat.svg` a `assets/icon.ico` con `resvg`/`ico`, dependencias de desarrollo que no afectan el binario final) y se embebe en el `.exe` vía `build.rs` + `winresource`.
+
+## Sistema de temas
+
+`src/theme/` reemplaza el uso original de `iced::Theme::custom(...)`. El
+motivo: con el tipo `Theme` propio de iced no se puede implementar el trait
+`Catalog` de ningún widget para él (ni el tipo ni el trait son locales a
+este crate — regla de coherencia de Rust), así que cada sitio de la UI tenía
+que acordarse de llamar `.style(...)` a mano con una función hecha a mano;
+dos veces distintas alguien se olvidó (fondos de panel, después los
+divisores de sección) y el resultado fue un color gris auto-derivado por
+iced que se veía mal. La solución, tomada de
+https://github.com/squidowl/halloy (otra app de escritorio en Iced): definir
+un tipo `Theme` propio (acá, `struct Theme { dark: bool }`,
+`src/theme/mod.rs`) e implementar el `Catalog` de cada widget usado para
+ese tipo, uno por archivo (`src/theme/button.rs`, `container.rs`, `rule.rs`,
+`scrollable.rs`, `svg.rs`, `text.rs`, `text_editor.rs`, `text_input.rs`,
+`checkbox.rs`, `pick_list.rs`, `overlay_menu.rs` para el desplegable interno
+de `pick_list`, `menu_bar.rs` para el `Catalog` de `iced_aw` de la barra
+Archivo/Edición/...). Así, un widget sin `.style()` explícito ya sale con
+los colores correctos por defecto (`Catalog::default()`), en vez de caer en
+el color auto-derivado de iced.
+
+Nota de versión: Halloy usa una versión de iced más nueva donde el trait a
+implementar es `iced::theme::Base`; en la versión fijada acá (iced 0.13.1)
+ese trait no existe — el real es `iced::daemon::{Appearance, DefaultStyle}`
+(mucho más chico: un solo método, `default_style(&self) -> Appearance`).
+
+`iced::Element<'a, Message>`/`iced_widget::Column<'a, Message>` traen
+`Theme = iced::Theme` como parámetro genérico por defecto; en vez de
+anotar las ~40 firmas que usan `Element<'a, Message>` en `app.rs`,
+alcanza con dos alias locales al principio del archivo
+(`type Element<'a, Message> = iced::Element<'a, Message, Theme>;` e igual
+para `Column`) para que todas esas firmas usen el tipo propio sin tocarlas.
+Ese mismo problema de default apareció en dos helpers con una anotación de
+tipo explícita a mano (`icon()`/`icon_button()`, que devolvían
+`iced::widget::Text<'a>`/`Row<'a, Message>` sin el tercer parámetro) — hay
+que revisar cualquier función nueva que anote su tipo de retorno como
+`iced::widget::X<'a, ...>` directamente en vez de usar los alias.
+
+Colores en color por color (fondos, bordes, acento, estados
+conectado/error/etc.) siguen siendo funciones `fn(dark: bool) -> Color` en
+`src/theme/mod.rs`, igual que antes — no se introdujo una estructura de
+paleta nueva, solo se sumaron las que reemplazan lo que antes venía de
+`theme.extended_palette()` (`primary`, `primary_weak`, `success`, `danger`,
+`muted`).
 
 ## Interfaz actual
 
@@ -187,7 +234,7 @@ Orden recomendado para próximos hitos:
 4. Implementar paginación, selección de celdas y exportación CSV segura.
 5. Añadir metadatos de columnas, índices y claves al árbol (más allá de tablas/vistas/funciones/procedimientos).
 6. ~~Permitir varias conexiones activas y asociar cada pestaña a una conexión.~~ Hecho: árbol de conexiones guardadas con persistencia JSON y estado por conexión/pestaña.
-7. Pulido visual general (iconos, barra de herramientas tipo ribbon) más allá del árbol de conexiones.
+7. ~~Pulido visual general (iconos, barra de herramientas tipo ribbon) más allá del árbol de conexiones.~~ Hecho en parte: árbol estilo Navicat con íconos por tipo/motor, divisores y tipografías consistentes, y — inspirado en https://github.com/squidowl/halloy — `Theme` propio con `Catalog` por widget (`src/theme/`), scrollbar fina, fila seleccionada tipo píldora y tooltips coherentes con el tema. Pendiente: barra de herramientas tipo ribbon.
 8. Mostrar el código fuente al hacer clic en una función/procedimiento del árbol.
 9. ~~Verificar empaquetado e interacción real en macOS y Linux.~~ Windows hecho (instalador Inno Setup + autoupdate). Pendiente: empaquetado e interacción real en macOS y Linux (el esquema de nombres de assets del release ya deja lugar para sumarlos).
 10. ~~Agregar un cuarto motor (MongoDB).~~ Hecho en v1 acotada: conectar, árbol base de datos→colecciones/vistas, previsualizar/filtrar documentos con JSON. Pendiente para versiones futuras: `mongodb+srv://`/replica sets, aggregation pipelines, inserts/updates/deletes, selección de base por pestaña, aplanado recursivo de subdocumentos/arrays en la grilla.
