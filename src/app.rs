@@ -1599,8 +1599,9 @@ impl App {
                         column![
                             row![
                                 text("Conexiones").size(15),
-                                button("Nueva")
-                                    .style(button::text)
+                                button(text("Nueva").size(13))
+                                    .padding([3, 10])
+                                    .style(ghost_button(self.dark))
                                     .on_press(Message::NewConnection)
                             ]
                             .spacing(12),
@@ -1722,6 +1723,44 @@ fn accent_button(dark: bool) -> impl Fn(&Theme, button::Status) -> button::Style
             border: Border {
                 radius: 6.0.into(),
                 ..Border::default()
+            },
+            shadow: Shadow::default(),
+        }
+    }
+}
+
+/// Botón "fantasma" para una acción secundaria puntual dentro de un
+/// encabezado de sección (ej. "Nueva" junto a "Conexiones") — con
+/// `button::text` no tiene fondo ni borde en reposo y se confunde con texto
+/// plano. Este estilo agrega un borde y un fondo tenue siempre visibles
+/// (no solo al pasar el mouse), sin llegar al peso visual de un botón sólido
+/// como los de la barra de herramientas.
+fn ghost_button(dark: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme: &Theme, status: button::Status| {
+        let (background_alpha, border_color) = match status {
+            button::Status::Hovered | button::Status::Pressed => (0.22, theme::accent(dark)),
+            button::Status::Disabled => (
+                0.04,
+                Color {
+                    a: 0.4,
+                    ..theme::border(dark)
+                },
+            ),
+            button::Status::Active => (0.1, theme::accent(dark)),
+        };
+        button::Style {
+            background: Some(
+                Color {
+                    a: background_alpha,
+                    ..theme::accent(dark)
+                }
+                .into(),
+            ),
+            text_color: theme::accent(dark),
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: 6.0.into(),
             },
             shadow: Shadow::default(),
         }
